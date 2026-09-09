@@ -1,0 +1,171 @@
+version: 1.2
+name: creative-listing-str-screening
+currency: USD
+
+source:
+  website: https://www.creativelisting.com/
+  listing_status:
+    - active
+  allowed_financing_types:
+    - subject_to
+    - seller_financing
+    - hybrid
+  exclude_cash_only_listings: true
+
+deduplication:
+  enabled: true
+  identifier: creative_listing_deal_id
+  analyze_previously_reviewed_deals: false
+  state_file: creative-listing-state.json
+
+filters:
+
+  str_legality:
+    enabled: true
+
+    reject_when:
+      explicit_str_prohibition_confirmed: true
+
+    continue_when:
+      pass_if_any:
+        - str_is_allowed: true
+        - permit_or_registration_required: true
+        - legality_is_uncertain: true
+        - property_specific_verification_required: true
+        - zoning_specific_verification_required: true
+
+    evidence:
+      prefer_authoritative_sources:
+        - city_government
+        - county_government
+        - municipal_code
+        - zoning_code
+      do_not_reject_based_only_on:
+        - blogs
+        - forums
+        - social_media
+        - unsupported_summaries
+
+    rejected_action: reject_silently
+
+  financing:
+    enabled: true
+
+    down_payment:
+      operator: less_than
+      amount: 40000
+
+    monthly_payment:
+      operator: less_than_or_equal
+      amount: 3600
+
+    required_fields:
+      - down_payment
+      - monthly_payment
+
+    missing_required_fields_action: reject_silently
+    failed_action: reject_silently
+
+  market:
+    enabled: true
+
+    # Se necesita AL MENOS UNO de estos dos para pasar el filtro.
+    # destination_city es opcional/alternativo: solo aplica si no hay
+    # una atraccion cercana que ya cumpla el requisito.
+    qualifying_demand_driver:
+      required: true
+      pass_if_any:
+
+        - attraction:
+            minimum_annual_visitors: 500000
+            operator: greater_than_or_equal
+            maximum_driving_distance_minutes: 30
+
+        - destination_city:
+            city_itself_is_primary_attraction: true
+            minimum_annual_visitors: 500000
+            operator: greater_than_or_equal
+            evidence_of_significant_tourism_demand_required: true
+
+    # No es obligatoria, pero suma puntos si esta presente.
+    military_base:
+      required: false
+      identify_if_present: true
+      maximum_driving_distance_minutes: 60
+      treat_as_positive_factor: true
+      include_in_notification: true
+
+    failed_demand_driver_action: reject_silently
+
+  feeder_cities:
+    enabled: true
+    required: true
+
+    minimum_qualifying_cities: 3
+
+    driving_time:
+      maximum_minutes: 240
+      operator: less_than_or_equal
+      measurement:
+        origin: subject_property_city_center
+        destination: feeder_city_center
+        traffic_assumption: normal_conditions
+
+    population:
+      geography: metropolitan_area
+      minimum: 650000
+      operator: greater_than_or_equal
+      use_latest_reliable_estimate: true
+
+    counting_rules:
+      count_unique_metro_areas_only: true
+      exclude_subject_property_metro: true
+
+    failed_action: reject_silently
+
+decision:
+
+  approve_only_if_all_required_filters_pass:
+    - str_legality
+    - financing
+    - market
+    - feeder_cities
+
+  possible_results:
+    approved: notify
+    rejected: do_not_notify
+
+notification:
+  notify_only_approved_deals: true
+  include_rejected_deals: false
+  include_daily_no_match_message: false
+
+  required_fields:
+    - property_address_or_description
+    - creative_listing_url
+    - city
+    - state
+    - financing_type
+    - purchase_price
+    - down_payment
+    - monthly_payment
+    - str_legality_summary
+    - primary_demand_driver
+    - annual_visitor_count
+    - nearby_military_base
+    - feeder_cities
+    - concise_approval_reason
+
+  feeder_city_details:
+    - city
+    - metropolitan_population
+    - estimated_driving_time
+
+property_characteristics:
+  # Temporalmente no se usan como filtros.
+  filter_by_purchase_price: false
+  filter_by_bedrooms: false
+  filter_by_bathrooms: false
+  filter_by_square_feet: false
+  filter_by_property_condition: false
+  filter_by_hoa: false
