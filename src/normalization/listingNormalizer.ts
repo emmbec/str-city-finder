@@ -36,6 +36,7 @@ export class DefaultListingNormalizer implements ListingNormalizer {
     assignString(raw.zipCode, "zipCode", result, issues);
     assignString(raw.description, "description", result, issues);
     assignString(raw.occupancyStatus, "occupancyStatus", result, issues);
+    assignDate(raw.sourcePostedAt, result, issues);
     assignParsed(parsePropertyType(raw.propertyType), raw.propertyType, "propertyType", result, issues);
     assignParsed(parseBedrooms(raw.beds), raw.beds, "beds", result, issues);
     assignParsed(parseSquareFeet(raw.squareFeet), raw.squareFeet, "squareFeet", result, issues);
@@ -88,6 +89,20 @@ export class DefaultListingNormalizer implements ListingNormalizer {
     result.confidence = issues.length === 0 ? "HIGH" : "LOW";
     return result;
   }
+}
+
+function assignDate(rawValue: unknown, target: NormalizedListing, issues: ParsingIssue[]): void {
+  if (rawValue === undefined || rawValue === null || rawValue === "") return;
+  if (typeof rawValue !== "string") {
+    issues.push({ field: "sourcePostedAt", rawValue, code: "MALFORMED", message: "sourcePostedAt must be date text." });
+    return;
+  }
+  const timestamp = Date.parse(rawValue);
+  if (Number.isNaN(timestamp)) {
+    issues.push({ field: "sourcePostedAt", rawValue, code: "MALFORMED", message: "sourcePostedAt could not be parsed as a date." });
+    return;
+  }
+  target.sourcePostedAt = new Date(timestamp).toISOString();
 }
 
 function assignParsedMoney(

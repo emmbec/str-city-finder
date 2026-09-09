@@ -14,5 +14,6 @@ test-results/
 playwright-report/
 *.trace.zip
 *.log
+.local/
 .vscode/
 .DS_Store

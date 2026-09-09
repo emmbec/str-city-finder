@@ -1,6 +1,6 @@
 # STR City Finder
 
-STR City Finder is a TypeScript service for collecting Creative Listing deals, preserving source facts, applying deterministic YAML-based investment rules, and storing current state plus history in Azure. Phases 1 and 2 establish the typed architecture, raw-preserving normalization, YAML-driven deterministic rules, and persistence boundaries. Creative Listing browser automation is intentionally not implemented yet.
+STR City Finder is a TypeScript service for collecting Creative Listing deals, preserving source facts, applying deterministic YAML-based investment rules, and storing current state plus history in Azure. Phase 3 adds Playwright/Chromium collection, reusable authentication state, defensive pagination, fixture-tested extraction, and orchestration into normalization and deterministic evaluation.
 
 ## Architecture
 
@@ -26,8 +26,20 @@ Responsibilities are deliberately separate:
 - `src/config` loads `config/buybox.yaml`, validates its exact structure with Zod, and derives `rulesVersion` from the declared version plus a SHA-256 content hash.
 - `src/rules` implements source eligibility, STR legality, financing, market demand-driver, optional military-base, and feeder-city behavior directly from the validated YAML. If required enabled rules are not registered, evaluation fails closed.
 - `src/azure` exposes testable abstractions and Azure SDK adapters for Key Vault secrets, Table Storage, and Blob Storage.
-- `src/normalization`, `src/logging`, and `src/orchestration` define dependency boundaries without prematurely implementing the future pipeline.
-- `src/scraper` is reserved for the future Creative Listing/Playwright implementation. No scraper is included yet.
+- `src/normalization`, `src/logging`, and `src/orchestration` keep parsing and deterministic evaluation outside the browser layer.
+- `src/scraper` owns Creative Listing authentication, browser navigation, raw extraction, session-state stores, selectors, bounded retries, and sanitized browser diagnostics. It returns `RawListingSnapshot` values and has no evaluation, persistence, or market-research dependency.
+
+## Creative Listing collection
+
+The collector first opens the configured listings route with saved Playwright storage state. A session is valid when the page is not a login form and exposes an authenticated landmark or remains on the configured listings route. Expired state causes a fresh browser context, a single credential-based login, and replacement of the saved state. CAPTCHA and one-time-code controls stop the run instead of being bypassed.
+
+Credentials always come through `SecretProvider` via `KeyVaultCredentialProvider`. Production uses `DefaultAzureCredential` and therefore Managed Identity when deployed in Azure. Production storage state uses a separately configured private Blob container; the local command writes mode-0600 state beneath the ignored `.local/` directory. Storage state, passwords, and usernames are never logged.
+
+Configured routes default to `/login` and `/listings`. They are environment-configurable because the authenticated Creative Listing routes and DOM still require live verification. Selectors are centralized in `src/scraper/selectors.ts` and prefer `data-testid`, `data-listing-id`/`data-deal-id`, `autocomplete`, semantic link relationships, and ARIA labels. Detail extraction reads durable `data-field`, definition-list, table, ARIA/data-value, and Schema.org address/price structures. It retains every discovered label/value under a `source.*` key and maps recognized labels to canonical raw fields.
+
+Discovery accepts only same-origin `/listing(s)/...` and `/deal(s)/...` links, strips query strings/fragments, and deduplicates URLs. Pagination follows an enabled `rel=next`, test-ID, or ARIA-labeled Next control until it is absent/disabled or the page signature repeats. `CREATIVE_LISTING_MAXIMUM_PAGES` is a safety ceiling, not an assumed page count.
+
+Navigation, transient page errors, and temporary selector failures use bounded retries. Authentication and deterministic extraction errors are not blindly retried. Failures record a query-free current URL and a screenshot with every input, textarea, and editable region masked. Optional post-auth Playwright traces disable DOM snapshots and source capture, are ignored by Git, and must be stored privately.
 
 Normalization supports currency and monthly-payment text, PITI, entry fee, down payment, purchase price, loan balance, HOA, interest rate, bedrooms, combined or separate full/half bathrooms, square footage, year built, property type, financing type, status, and core location text. The normalizer retains a copy of all raw fields and records structured issues instead of fabricating malformed or conflicting values. When an explicit monthly payment is absent, a successfully parsed PITI value supplies the monthly-payment fact because PITI is itself a monthly payment; an explicit monthly-payment value always takes precedence.
 
@@ -69,18 +81,25 @@ npm test
 npm run build
 ```
 
-Copy `.env.example` to `.env` for local deployment configuration and replace placeholders locally. Never commit `.env` or real secrets. Investment rules must remain in `config/buybox.yaml`; environment variables are not a substitute for business rules.
-
-The default credential chain is `DefaultAzureCredential`. In production, configure Managed Identity with least-privilege access to the required Key Vault secrets and Storage resources. Relevant environment names are documented in `.env.example`; Phase 1 does not instantiate production services from those values yet.
-
-To verify configuration loading without scraping:
+For local browser runs, install the Playwright Chromium build once if it is not already present:
 
 ```bash
-npm run build
-npm start
+npm exec playwright install chromium
 ```
 
-Startup logs only configuration metadata and the derived rules version. It never prints YAML contents or secrets.
+Copy `.env.example` to `.env` for local deployment configuration and replace placeholders locally. Never commit `.env` or real secrets. Investment rules must remain in `config/buybox.yaml`; environment variables are not a substitute for business rules.
+
+The default credential chain is `DefaultAzureCredential`. In production, configure Managed Identity with least-privilege access to the required Key Vault secrets and private session-state Blob container. Relevant environment names are documented in `.env.example`.
+
+Run a live local collection through normalization and deterministic evaluation:
+
+```bash
+npm run scrape:creative-listing
+```
+
+This command loads non-secret settings from `.env` when the file exists and requires `AZURE_KEY_VAULT_URL` plus the two configured secret names. Authenticate locally with a supported `DefaultAzureCredential` developer identity (for example Azure CLI credentials) that has read access to only those secrets. Set `CREATIVE_LISTING_HEADLESS=false` when visually verifying selectors. No Creative Listing credential belongs in `.env`; `.env.example` contains names and placeholders only.
+
+Production `npm start` additionally requires `AZURE_BLOB_SERVICE_URL`, `CREATIVE_LISTING_SESSION_BLOB_CONTAINER`, and `CREATIVE_LISTING_SESSION_BLOB_NAME`. The session container must be private and separate from ordinary raw/diagnostic artifacts.
 
 ## Docker
 
@@ -95,9 +114,9 @@ No credentials are embedded in the image. Supply deployment configuration and Ma
 
 ## Current limitations
 
-- Creative Listing authentication, browser extraction, change detection, and Playwright selectors are not implemented.
-- Browser extraction is not implemented. Normalization currently consumes canonical raw field names supplied through `RawListingSnapshot`.
+- The configured Creative Listing routes, authenticated landmark selectors, card links, pagination control, and detail labels require a manual live-site verification. The implementation intentionally uses configurable routes and centralized fallbacks rather than claiming an unverified DOM contract.
+- Cross-run material-change detection and persistence of collection results remain separate from this Phase 3 collection pipeline. The production entry point currently collects, normalizes, evaluates, and logs structured outcomes; the scraper never saves directly to Azure.
 - STR legality, attractions, destination demand, military-base proximity, and feeder-city population/travel facts must be supplied as evidence. The deterministic engine evaluates them but does not research or infer them.
-- Deduplication state-file behavior is deferred with scraper/orchestration work; notification settings control future output behavior and do not alter evaluation outcomes.
+- URL/ID deduplication occurs within a collection run. Notification settings do not alter evaluation outcomes.
 - Azure adapter integration tests against a live account or Azurite are not included; repository behavior is unit-tested through the storage abstraction.
 - Infrastructure-as-code and Azure Container Apps Job deployment are future phases.

@@ -4,5 +4,11 @@ export interface ListingSource {
   collect(runId: string): AsyncIterable<RawListingSnapshot>;
 }
 
-// This is a Phase 1 boundary only. No Creative Listing selectors,
-// authentication flow, or browser behavior is implemented here.
+export interface CreativeListingCredentials {
+  username: string;
+  password: string;
+}
+
+export interface CredentialProvider {
+  getCredentials(): Promise<CreativeListingCredentials>;
+}

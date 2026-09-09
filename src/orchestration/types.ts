@@ -4,15 +4,27 @@ import type { StructuredLogger } from "../logging/index.js";
 import type { ListingNormalizer } from "../normalization/index.js";
 import type { ListingRuleEngine } from "../rules/index.js";
 import type { ListingSource } from "../scraper/index.js";
+import type { ListingEvaluation, NormalizedListing, RawListingSnapshot } from "../models/index.js";
 
-export interface RunDependencies {
+export interface CollectionPipelineDependencies {
   source: ListingSource;
   normalizer: ListingNormalizer;
   ruleEngine: ListingRuleEngine;
-  repositories: RepositorySet;
   logger: StructuredLogger;
   buyBox: LoadedBuyBoxConfig;
 }
 
-// Phase 1 defines dependency boundaries only. Run coordination is deferred until
-// collection and normalization are implemented.
+export interface RunDependencies extends CollectionPipelineDependencies {
+  repositories: RepositorySet;
+}
+
+export interface CollectedListingResult {
+  raw: RawListingSnapshot;
+  normalized: NormalizedListing;
+  evaluation: ListingEvaluation;
+}
+
+export interface PipelineRuntime {
+  now(): string;
+  createEvaluationId(): string;
+}
