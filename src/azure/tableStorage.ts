@@ -28,6 +28,10 @@ function isNotFound(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as RestErrorLike).statusCode === 404;
 }
 
+function isConflict(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as RestErrorLike).statusCode === 409;
+}
+
 export class AzureTableStore implements TableStore {
   public constructor(
     private readonly endpoint: string,
@@ -39,7 +43,11 @@ export class AzureTableStore implements TableStore {
   }
 
   public async createTableIfNotExists(tableName: string): Promise<void> {
-    await this.client(tableName).createTable();
+    try {
+      await this.client(tableName).createTable();
+    } catch (error) {
+      if (!isConflict(error)) throw error;
+    }
   }
 
   public async get(tableName: string, partitionKey: string, rowKey: string): Promise<StoredTableEntity | undefined> {
@@ -70,7 +78,8 @@ export class AzureTableStore implements TableStore {
       ? undefined
       : `PartitionKey eq '${query.partitionKey.replaceAll("'", "''")}'`;
     const entities: StoredTableEntity[] = [];
-    for await (const entity of this.client(tableName).listEntities<StoredTableEntity>({ queryOptions: { filter } })) {
+    const queryOptions = filter === undefined ? {} : { filter };
+    for await (const entity of this.client(tableName).listEntities<StoredTableEntity>({ queryOptions })) {
       entities.push({
         partitionKey: entity.partitionKey,
         rowKey: entity.rowKey,
