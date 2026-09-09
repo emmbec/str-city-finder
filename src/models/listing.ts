@@ -15,6 +15,48 @@ export type ManualStatus =
   | "NO_LONGER_AVAILABLE"
   | "PURCHASED";
 
+export interface StrLegalityFacts {
+  explicitStrProhibitionConfirmed?: boolean;
+  strIsAllowed?: boolean;
+  permitOrRegistrationRequired?: boolean;
+  legalityIsUncertain?: boolean;
+  propertySpecificVerificationRequired?: boolean;
+  zoningSpecificVerificationRequired?: boolean;
+  evidenceSourceTypes: string[];
+}
+
+export interface AttractionFacts {
+  name: string;
+  annualVisitors?: number;
+  drivingDistanceMinutes?: number;
+}
+
+export interface DestinationCityFacts {
+  cityItselfIsPrimaryAttraction?: boolean;
+  annualVisitors?: number;
+  evidenceOfSignificantTourismDemand?: boolean;
+}
+
+export interface MilitaryBaseFacts {
+  name: string;
+  drivingDistanceMinutes?: number;
+}
+
+export interface FeederCityFacts {
+  city: string;
+  metroAreaId?: string;
+  metropolitanPopulation?: number;
+  drivingTimeMinutes?: number;
+  isSubjectPropertyMetro?: boolean;
+}
+
+export interface MarketScreeningFacts {
+  attractions: AttractionFacts[];
+  destinationCity?: DestinationCityFacts;
+  militaryBases: MilitaryBaseFacts[];
+  feederCities: FeederCityFacts[];
+}
+
 export interface RawListingSnapshot {
   sourceListingId: string;
   sourceUrl: string;
@@ -26,8 +68,8 @@ export interface NormalizedListing {
   sourceListingId: string;
   sourceUrl: string;
   address?: string;
-  city: string;
-  state: string;
+  city?: string;
+  state?: string;
   zipCode?: string;
   propertyType?: string;
   beds?: number;
@@ -39,13 +81,18 @@ export interface NormalizedListing {
   occupancyStatus?: string;
   description?: string;
   financials: MoneySnapshot;
+  strLegality?: StrLegalityFacts;
+  marketScreening?: MarketScreeningFacts;
   sourcePostedAt?: IsoDateTime;
   sourceStatus: SourceListingStatus;
   confidence: Confidence;
   parsingIssues: ParsingIssue[];
+  rawFields: Readonly<Record<string, unknown>>;
 }
 
-export interface Listing extends NormalizedListing {
+export interface Listing extends Omit<NormalizedListing, "city" | "state"> {
+  city: string;
+  state: string;
   firstSeenAt: IsoDateTime;
   lastSeenAt: IsoDateTime;
   currentFilterStatus: FilterStatus;

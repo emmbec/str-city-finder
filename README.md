@@ -1,6 +1,6 @@
 # STR City Finder
 
-STR City Finder is a TypeScript service for collecting Creative Listing deals, preserving source facts, applying deterministic YAML-based investment rules, and storing current state plus history in Azure. Phase 1 establishes the typed architecture, configuration boundary, rule-engine contracts, and persistence layer. Creative Listing browser automation is intentionally not implemented yet.
+STR City Finder is a TypeScript service for collecting Creative Listing deals, preserving source facts, applying deterministic YAML-based investment rules, and storing current state plus history in Azure. Phases 1 and 2 establish the typed architecture, raw-preserving normalization, YAML-driven deterministic rules, and persistence boundaries. Creative Listing browser automation is intentionally not implemented yet.
 
 ## Architecture
 
@@ -24,10 +24,14 @@ Responsibilities are deliberately separate:
 
 - `src/models` contains strongly typed domain data. `RawListingSnapshot` preserves source fields, while `NormalizedListing` contains parsed facts and explicit parsing issues.
 - `src/config` loads `config/buybox.yaml`, validates its exact structure with Zod, and derives `rulesVersion` from the declared version plus a SHA-256 content hash.
-- `src/rules` defines rule contracts and deterministic result aggregation. Phase 1 does not implement the individual investment rules. If required enabled rules are not registered, evaluation fails closed.
+- `src/rules` implements source eligibility, STR legality, financing, market demand-driver, optional military-base, and feeder-city behavior directly from the validated YAML. If required enabled rules are not registered, evaluation fails closed.
 - `src/azure` exposes testable abstractions and Azure SDK adapters for Key Vault secrets, Table Storage, and Blob Storage.
 - `src/normalization`, `src/logging`, and `src/orchestration` define dependency boundaries without prematurely implementing the future pipeline.
-- `src/scraper` is reserved for the future Creative Listing/Playwright implementation. No scraper is included in Phase 1.
+- `src/scraper` is reserved for the future Creative Listing/Playwright implementation. No scraper is included yet.
+
+Normalization supports currency and monthly-payment text, PITI, entry fee, down payment, purchase price, loan balance, HOA, interest rate, bedrooms, combined or separate full/half bathrooms, square footage, year built, property type, financing type, status, and core location text. The normalizer retains a copy of all raw fields and records structured issues instead of fabricating malformed or conflicting values. When an explicit monthly payment is absent, a successfully parsed PITI value supplies the monthly-payment fact because PITI is itself a monthly payment; an explicit monthly-payment value always takes precedence.
+
+Deterministic evaluation covers the source status and financing-type constraints, cash-only exclusion, STR prohibition/evidence and verification states, down-payment and monthly-payment limits, attraction or destination-city demand, optional military-base proximity, and unique feeder-metro population/travel requirements. Thresholds and enabled behavior are always read from `config/buybox.yaml` at evaluation time.
 
 ## Storage model
 
@@ -59,6 +63,7 @@ Install and verify:
 
 ```bash
 npm ci
+npm run lint
 npm run typecheck
 npm test
 npm run build
@@ -88,9 +93,11 @@ docker run --rm str-city-finder
 
 No credentials are embedded in the image. Supply deployment configuration and Managed Identity at runtime.
 
-## Phase 1 limitations
+## Current limitations
 
-- Creative Listing authentication, extraction, normalization functions, change detection, and Playwright selectors are not implemented.
-- The four YAML rule implementations (`str_legality`, `financing`, `market`, and `feeder_cities`) are not implemented. Only their validated configuration and execution contracts exist.
+- Creative Listing authentication, browser extraction, change detection, and Playwright selectors are not implemented.
+- Browser extraction is not implemented. Normalization currently consumes canonical raw field names supplied through `RawListingSnapshot`.
+- STR legality, attractions, destination demand, military-base proximity, and feeder-city population/travel facts must be supplied as evidence. The deterministic engine evaluates them but does not research or infer them.
+- Deduplication state-file behavior is deferred with scraper/orchestration work; notification settings control future output behavior and do not alter evaluation outcomes.
 - Azure adapter integration tests against a live account or Azurite are not included; repository behavior is unit-tested through the storage abstraction.
 - Infrastructure-as-code and Azure Container Apps Job deployment are future phases.

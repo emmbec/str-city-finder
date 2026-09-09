@@ -17,8 +17,10 @@ export class DeterministicRuleEngine implements ListingRuleEngine {
   }
 
   public async evaluate(context: RuleEvaluationContext): Promise<ListingEvaluation> {
-    const requiredRuleIds = context.config.decision.approve_only_if_all_required_filters_pass;
-    const enabledRequiredRuleIds = requiredRuleIds.filter((ruleId) => context.config.filters[ruleId].enabled);
+    const requiredRuleIds: readonly BuyBoxRuleId[] = ["source", ...context.config.decision.approve_only_if_all_required_filters_pass];
+    const enabledRequiredRuleIds = requiredRuleIds.filter(
+      (ruleId) => ruleId === "source" || context.config.filters[ruleId].enabled,
+    );
     const missingRuleIds = enabledRequiredRuleIds.filter((ruleId) => !this.rules.has(ruleId));
     if (missingRuleIds.length > 0) {
       throw new MissingRuleImplementationError(missingRuleIds);
@@ -30,7 +32,7 @@ export class DeterministicRuleEngine implements ListingRuleEngine {
       if (rule === undefined) {
         throw new MissingRuleImplementationError([ruleId]);
       }
-      results.push(await rule.evaluate(context));
+      results.push(...await rule.evaluate(context));
     }
 
     return {

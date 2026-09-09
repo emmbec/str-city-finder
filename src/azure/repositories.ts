@@ -73,9 +73,11 @@ function timestampKey(value: string): string {
 }
 
 function monthKey(value: string): string {
-  const match = /^(\d{4})-(\d{2})/.exec(value);
-  if (match === null) throw new Error(`Expected an ISO timestamp, received '${value}'.`);
-  return `${match[1]}-${match[2]}`;
+  const match = /^(?<year>\d{4})-(?<month>\d{2})/.exec(value);
+  const year = match?.groups?.year;
+  const month = match?.groups?.month;
+  if (year === undefined || month === undefined) throw new Error(`Expected an ISO timestamp, received '${value}'.`);
+  return `${year}-${month}`;
 }
 
 abstract class JsonRepository<T> {

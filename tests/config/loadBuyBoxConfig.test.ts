@@ -21,10 +21,15 @@ describe("loadBuyBoxConfig", () => {
     const path = join(directory, "invalid.yaml");
     await writeFile(path, "version: 1\nname: test\nunexpected: true\n", "utf8");
 
-    await expect(loadBuyBoxConfig(path)).rejects.toMatchObject({
-      name: "BuyBoxConfigurationError",
-      issues: expect.arrayContaining([expect.stringContaining("Unrecognized")]),
-    } satisfies Partial<BuyBoxConfigurationError>);
+    try {
+      await loadBuyBoxConfig(path);
+      expect.fail("Expected invalid configuration to be rejected.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BuyBoxConfigurationError);
+      if (error instanceof BuyBoxConfigurationError) {
+        expect(error.issues.some((issue) => issue.includes("Unrecognized"))).toBe(true);
+      }
+    }
   });
 
   it("fails clearly for malformed YAML", async () => {

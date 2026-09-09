@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const strictObject = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict();
-const positiveNumber = z.number().finite().nonnegative();
+const positiveNumber = z.number().nonnegative();
 const actionSchema = z.enum(["reject_silently"]);
 
 const comparisonSchema = strictObject({
@@ -15,7 +15,7 @@ const visitorComparisonSchema = strictObject({
 });
 
 export const buyBoxConfigSchema = strictObject({
-  version: z.union([z.string().min(1), z.number().finite()]),
+  version: z.union([z.string().min(1), z.number()]),
   name: z.string().min(1),
   currency: z.string().length(3),
   source: strictObject({
@@ -131,4 +131,5 @@ export const buyBoxConfigSchema = strictObject({
 });
 
 export type BuyBoxConfig = z.infer<typeof buyBoxConfigSchema>;
-export type BuyBoxRuleId = BuyBoxConfig["decision"]["approve_only_if_all_required_filters_pass"][number];
+export type BuyBoxFilterRuleId = BuyBoxConfig["decision"]["approve_only_if_all_required_filters_pass"][number];
+export type BuyBoxRuleId = "source" | BuyBoxFilterRuleId;

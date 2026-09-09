@@ -3,29 +3,32 @@ import type { StoredTableEntity, TableQuery, TableStore } from "../../src/azure/
 export class InMemoryTableStore implements TableStore {
   private readonly tables = new Map<string, Map<string, StoredTableEntity>>();
 
-  public async createTableIfNotExists(tableName: string): Promise<void> {
+  public createTableIfNotExists(tableName: string): Promise<void> {
     if (!this.tables.has(tableName)) this.tables.set(tableName, new Map());
+    return Promise.resolve();
   }
 
-  public async get(tableName: string, partitionKey: string, rowKey: string): Promise<StoredTableEntity | undefined> {
-    return this.tables.get(tableName)?.get(this.key(partitionKey, rowKey));
+  public get(tableName: string, partitionKey: string, rowKey: string): Promise<StoredTableEntity | undefined> {
+    return Promise.resolve(this.tables.get(tableName)?.get(this.key(partitionKey, rowKey)));
   }
 
-  public async add(tableName: string, entity: StoredTableEntity): Promise<void> {
+  public add(tableName: string, entity: StoredTableEntity): Promise<void> {
     const table = this.getTable(tableName);
     const key = this.key(entity.partitionKey, entity.rowKey);
     if (table.has(key)) throw new Error("EntityAlreadyExists");
     table.set(key, structuredClone(entity));
+    return Promise.resolve();
   }
 
-  public async upsert(tableName: string, entity: StoredTableEntity): Promise<void> {
+  public upsert(tableName: string, entity: StoredTableEntity): Promise<void> {
     this.getTable(tableName).set(this.key(entity.partitionKey, entity.rowKey), structuredClone(entity));
+    return Promise.resolve();
   }
 
-  public async list(tableName: string, query: TableQuery = {}): Promise<StoredTableEntity[]> {
-    return [...this.getTable(tableName).values()]
+  public list(tableName: string, query: TableQuery = {}): Promise<StoredTableEntity[]> {
+    return Promise.resolve([...this.getTable(tableName).values()]
       .filter((entity) => query.partitionKey === undefined || entity.partitionKey === query.partitionKey)
-      .map((entity) => structuredClone(entity));
+      .map((entity) => structuredClone(entity)));
   }
 
   private getTable(tableName: string): Map<string, StoredTableEntity> {

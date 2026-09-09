@@ -11,7 +11,7 @@ export interface RuleEvaluationContext {
 
 export interface BuyBoxRule {
   readonly ruleId: BuyBoxRuleId;
-  evaluate(context: RuleEvaluationContext): Promise<RuleResult> | RuleResult;
+  evaluate(context: RuleEvaluationContext): Promise<readonly RuleResult[]> | readonly RuleResult[];
 }
 
 export interface ListingRuleEngine {

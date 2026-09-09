@@ -1,5 +1,5 @@
 import { DefaultAzureCredential, type TokenCredential } from "@azure/identity";
-import { TableClient, type TableEntity } from "@azure/data-tables";
+import { TableClient } from "@azure/data-tables";
 
 export interface StoredTableEntity {
   partitionKey: string;
@@ -66,11 +66,11 @@ export class AzureTableStore implements TableStore {
   }
 
   public async add(tableName: string, entity: StoredTableEntity): Promise<void> {
-    await this.client(tableName).createEntity(entity as TableEntity<StoredTableEntity>);
+    await this.client(tableName).createEntity(entity);
   }
 
   public async upsert(tableName: string, entity: StoredTableEntity): Promise<void> {
-    await this.client(tableName).upsertEntity(entity as TableEntity<StoredTableEntity>, "Replace");
+    await this.client(tableName).upsertEntity(entity, "Replace");
   }
 
   public async list(tableName: string, query: TableQuery = {}): Promise<StoredTableEntity[]> {

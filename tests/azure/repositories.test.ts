@@ -13,6 +13,7 @@ const listing: Listing = {
   sourceStatus: "ACTIVE",
   confidence: "HIGH",
   parsingIssues: [],
+  rawFields: {},
   firstSeenAt: "2026-09-09T10:00:00.000Z",
   lastSeenAt: "2026-09-09T10:00:00.000Z",
   currentFilterStatus: "NOT_EVALUATED",
