@@ -1,5 +1,6 @@
 export const CREATIVE_LISTING_SELECTORS = {
   username: [
+    '#signin-email',
     '[data-testid="email"]',
     '[data-testid="username"]',
     'input[autocomplete="username"]',
@@ -8,6 +9,7 @@ export const CREATIVE_LISTING_SELECTORS = {
     'input[name="username"]',
   ],
   password: [
+    '#signin-password',
     '[data-testid="password"]',
     'input[autocomplete="current-password"]',
     'input[type="password"]',
@@ -19,12 +21,14 @@ export const CREATIVE_LISTING_SELECTORS = {
     'input[type="submit"]',
   ],
   authenticated: [
+    'a[href="/dashboard"]',
     '[data-testid="listing-grid"]',
     '[data-testid="deal-grid"]',
     '[data-testid="account-menu"]',
     'a[href*="logout"]',
   ],
   listingContainer: [
+    '[id^="deal-"]',
     '[data-testid="listing-grid"]',
     '[data-testid="deal-grid"]',
     '[data-testid="listing-card"]',
@@ -46,7 +50,12 @@ export const CREATIVE_LISTING_SELECTORS = {
     'a[href*="/deal/"]',
     'a[href*="/deals/"]',
   ],
+  listingCards: '[id^="deal-"]',
+  detailReady: 'h2:text-is("Listing Highlights"), h3:text-is("Listing Highlights"), [data-field], dl, [data-testid="listing-detail"]',
+  renderedFieldLabels: 'p, span, label, h2, h3, div',
+  publicNavigation: ['a[href="/auth"]', 'a[href^="/signup"]'],
   nextPage: [
+    'button:text-is("Next")',
     '[data-testid="pagination-next"]',
     'a[rel="next"]',
     'button[aria-label="Next"]',
@@ -69,7 +78,7 @@ export const CREATIVE_LISTING_SELECTORS = {
 } as const;
 
 export const FIELD_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  sourcePostedAt: ["posted date", "date posted", "listed", "created at"],
+  sourcePostedAt: ["posted date", "date posted", "listed", "created at", "listed on"],
   sourceStatus: ["listing status", "deal status", "status"],
   address: ["property address", "street address", "address"],
   city: ["city"],
@@ -87,13 +96,24 @@ export const FIELD_ALIASES: Readonly<Record<string, readonly string[]>> = {
   downPayment: ["down payment", "downpayment"],
   loanBalance: ["loan balance", "existing loan", "mortgage balance"],
   interestRate: ["interest rate", "rate"],
-  piti: ["piti", "monthly piti"],
+  piti: ["piti", "monthly piti", "PITI (Principal, Interest, Taxes, Insurance)"],
   monthlyPayment: ["monthly payment", "payment"],
-  hoa: ["hoa", "hoa fee", "hoa dues"],
+  hoa: ["hoa", "hoa fee", "hoa dues", "HOA Monthly Fee"],
   financingType: ["financing type", "deal type", "financing"],
   occupancyStatus: ["occupancy", "occupancy status", "occupied"],
-  description: ["description", "seller notes", "notes", "deal terms"],
+  description: ["description", "seller notes", "notes", "deal terms", "About this Listing"],
   balloonPayment: ["balloon payment", "balloon"],
   loanTerm: ["loan term", "term"],
   amortization: ["amortization", "amortization period"],
+  lotSize: ["lot size"],
+  pricePerSquareFoot: ["price/sqft"],
+  parking: ["parking"],
+  loanType: ["loan type"],
+  earnestMoneyDeposit: ["earnest money deposit (emd)"],
+  loanMaturityDate: ["loan maturity date"],
+  expectedCloseOfEscrow: ["expected close of escrow"],
+  optionFee: ["option fee"],
+  optionSalePrice: ["option sale price"],
+  optionTerm: ["option term", "option term (years)"],
+  monthlyLeasePayment: ["monthly lease payment"],
 };

@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type BrowserType, type Locator, type Page } from "playwright";
 import type { StructuredLogger } from "../logging/index.js";
 import type { RawListingSnapshot } from "../models/index.js";
-import { discoverListingUrls, extractRawListing, findNextPageControl, sanitizedUrl } from "./extractor.js";
+import { discoverListingUrls, extractRawListing, findNextPageControl, listingPageSignature, sanitizedUrl } from "./extractor.js";
+import { RateLimitedError, SiteResponseGuard, SourcePageError } from "./pageState.js";
 import { withTransientRetry } from "./retry.js";
 import { CREATIVE_LISTING_SELECTORS } from "./selectors.js";
 import { captureStorageState, type SessionStateStore } from "./sessionState.js";
@@ -38,6 +39,15 @@ export class AuthenticationError extends Error {
   }
 }
 
+export class CollectionIncompleteError extends Error {
+  public readonly code = "INCOMPLETE_COLLECTION";
+
+  public constructor(public readonly failedListings: number) {
+    super("One or more listing detail pages could not be collected; this execution is incomplete.");
+    this.name = "CollectionIncompleteError";
+  }
+}
+
 export class CreativeListingSource implements ListingSource {
   public constructor(
     private readonly config: CreativeListingScraperConfig,
@@ -52,31 +62,35 @@ export class CreativeListingSource implements ListingSource {
     let context: BrowserContext | undefined;
     let page: Page | undefined;
     let traceStarted = false;
+    let failedListings = 0;
+    const guard = new SiteResponseGuard(new URL(this.config.baseUrl).origin);
     try {
       browser = await this.browserType.launch({
         headless: this.config.headless,
         ...(this.config.browserExecutablePath === undefined ? {} : { executablePath: this.config.browserExecutablePath }),
       });
       const savedState = await this.loadSessionState(runId);
-      context = await browser.newContext(savedState === undefined ? {} : { storageState: savedState });
+      context = await browser.newContext({ serviceWorkers: "block", ...(savedState === undefined ? {} : { storageState: savedState }) });
+      await guard.install(context);
       page = await context.newPage();
       page.setDefaultTimeout(this.config.selectorTimeoutMs);
 
-      await this.navigate(page, this.listingsUrl(), runId, "session_validation");
-      if (!(await this.isAuthenticated(page))) {
+      await this.navigate(page, this.listingsUrl(), runId, "session_validation", guard);
+      if (!(await this.isAuthenticated(page, guard))) {
         this.logger.info({ runId, stage: "authentication", event: "session_refresh_required" });
         await context.close();
-        context = await browser.newContext();
+        context = await browser.newContext({ serviceWorkers: "block" });
+        await guard.install(context);
         page = await context.newPage();
         page.setDefaultTimeout(this.config.selectorTimeoutMs);
-        await this.login(page, runId);
+        await this.login(page, runId, guard);
         await this.sessionStore.save(await captureStorageState(context));
         this.logger.info({ runId, stage: "authentication", event: "session_state_refreshed", status: "success" });
+        await this.navigate(page, this.listingsUrl(), runId, "listing_discovery", guard);
       } else {
         this.logger.info({ runId, stage: "authentication", event: "session_reused", status: "success" });
       }
 
-      await this.navigate(page, this.listingsUrl(), runId, "listing_discovery");
       if (this.config.captureTrace) {
         await context.tracing.start({ screenshots: true, snapshots: false, sources: false });
         traceStarted = true;
@@ -87,9 +101,12 @@ export class CreativeListingSource implements ListingSource {
       const seenPageSignatures = new Set<string>();
 
       for (let pageNumber = 1; pageNumber <= this.config.maximumPages; pageNumber += 1) {
-        const listingUrls = await this.discoverWithRetry(page, runId, pageNumber);
-        const signature = `${sanitizedUrl(page.url())}|${listingUrls.join("|")}`;
-        if (seenPageSignatures.has(signature)) break;
+        const listingUrls = await this.discoverWithRetry(page, runId, pageNumber, guard);
+        const signature = listingPageSignature(listingUrls);
+        if (seenPageSignatures.has(signature) || !listingUrls.some((url) => !seenUrls.has(url))) {
+          this.logger.info({ runId, stage: "extraction", event: "pagination_stopped", reason: "NO_NEW_UUIDS", pageNumber });
+          break;
+        }
         seenPageSignatures.add(signature);
         this.logger.info({ runId, stage: "extraction", event: "discovery_page_collected", pageNumber, listingsFound: listingUrls.length });
 
@@ -97,11 +114,14 @@ export class CreativeListingSource implements ListingSource {
           if (seenUrls.has(url)) continue;
           seenUrls.add(url);
           try {
-            await this.navigate(detailPage, url, runId, "listing_detail");
-            if (!(await this.isAuthenticated(detailPage))) throw new AuthenticationError("Creative Listing session expired during collection.");
+            await this.navigate(detailPage, url, runId, "listing_detail", guard);
+            if (!(await this.isAuthenticated(detailPage, guard))) throw new AuthenticationError("Creative Listing session expired during collection.");
+            await this.waitForRendered(detailPage, guard, async () => await hasAnyVisible(detailPage, [CREATIVE_LISTING_SELECTORS.detailReady]));
             yield await extractRawListing(detailPage, new Date().toISOString());
           } catch (error) {
-            if (error instanceof AuthenticationError || error instanceof AuthenticationBarrierError) throw error;
+            await guard.assertNotRateLimited();
+            if (error instanceof AuthenticationError || error instanceof AuthenticationBarrierError || error instanceof RateLimitedError) throw error;
+            failedListings += 1;
             await this.captureFailure(detailPage, runId, "listing-detail");
             this.logger.error({
               runId,
@@ -109,17 +129,29 @@ export class CreativeListingSource implements ListingSource {
               event: "listing_extraction_failed",
               status: "error",
               page: sanitizedUrl(detailPage.url()),
-              errorCode: error instanceof Error ? error.name : "UnknownError",
+              errorCode: error instanceof SourcePageError ? error.code : error instanceof Error ? error.name : "UnknownError",
             }, "A listing was skipped after extraction failed.");
           }
         }
 
+        if (pageNumber >= this.config.maximumPages) break;
+        await guard.check(page);
         const next = await findNextPageControl(page);
         if (next === undefined) break;
-        await this.advancePage(page, next, signature, runId);
+        if (!(await this.advancePage(page, next, signature, guard))) {
+          this.logger.info({ runId, stage: "navigation", event: "pagination_stopped", reason: "REPEATED_UUIDS", pageNumber });
+          break;
+        }
       }
       await detailPage.close();
+      if (failedListings > 0) throw new CollectionIncompleteError(failedListings);
     } catch (error) {
+      // A background 429 can abort a click before its normal guard check.
+      const failure: unknown = await guard.assertNotRateLimited().then(() => error, (rateError: unknown) => rateError);
+      if (failure instanceof RateLimitedError) {
+        this.logger.error({ runId, stage: "navigation", event: "scraper_rate_limited", errorCode: failure.code, retryAfter: failure.retryAfter });
+        throw failure;
+      }
       if (context !== undefined && traceStarted) {
         await this.captureTrace(context, runId);
         traceStarted = false;
@@ -132,8 +164,9 @@ export class CreativeListingSource implements ListingSource {
     }
   }
 
-  private async login(page: Page, runId: string): Promise<void> {
-    await this.navigate(page, new URL(this.config.loginPath, this.config.baseUrl).toString(), runId, "login_page");
+  private async login(page: Page, runId: string, guard: SiteResponseGuard): Promise<void> {
+    await this.navigate(page, new URL(this.config.loginPath, this.config.baseUrl).toString(), runId, "login_page", guard);
+    await this.waitForRendered(page, guard, async () => await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.password));
     if (await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.accessBarrier)) throw new AuthenticationBarrierError();
     const username = await visibleLocator(page.getByLabel(/email|username/i).first())
       ?? await firstVisible(page, CREATIVE_LISTING_SELECTORS.username);
@@ -145,31 +178,41 @@ export class CreativeListingSource implements ListingSource {
       throw new AuthenticationError("Creative Listing login controls could not be located.");
     }
     const credentials = await this.credentialProvider.getCredentials();
+    await guard.check(page);
     await username.fill(credentials.username);
     await password.fill(credentials.password);
-    const loginPath = normalizedPath(new URL(this.config.loginPath, this.config.baseUrl).toString());
-    await Promise.all([
-      page.waitForURL((url) => normalizedPath(url.toString()) !== loginPath, { timeout: this.config.selectorTimeoutMs }).catch(() => undefined),
-      submit.click(),
-    ]);
+    await submit.click();
     if (await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.accessBarrier)) throw new AuthenticationBarrierError();
-    if (!(await this.isAuthenticated(page))) {
+    if (!(await this.isAuthenticated(page, guard, true))) {
       throw new AuthenticationError(`Creative Listing authentication did not produce a valid session (${sanitizedUrl(page.url())}).`);
     }
   }
 
-  private async isAuthenticated(page: Page): Promise<boolean> {
-    if (await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.accessBarrier)) throw new AuthenticationBarrierError();
-    if (await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.password)) return false;
-    const currentPath = normalizedPath(page.url());
-    if (currentPath === normalizedPath(new URL(this.config.loginPath, this.config.baseUrl).toString())) return false;
-    return await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.authenticated)
-      || currentPath === normalizedPath(new URL(this.config.listingsPath, this.config.baseUrl).toString());
+  private async isAuthenticated(page: Page, guard: SiteResponseGuard, afterLogin = false): Promise<boolean> {
+    const deadline = Date.now() + this.config.selectorTimeoutMs;
+    do {
+      await guard.check(page);
+      if (await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.accessBarrier)) throw new AuthenticationBarrierError();
+      const passwordVisible = await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.password);
+      const publicPage = passwordVisible || await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.publicNavigation)
+        || /\/(?:auth|signup)(?:\/|$)/i.test(new URL(page.url()).pathname);
+      if (!publicPage && await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.authenticated)) return true;
+      if (passwordVisible && !afterLogin) return false;
+      await page.waitForTimeout(100);
+    } while (Date.now() < deadline);
+    return false;
   }
 
-  private async navigate(page: Page, url: string, runId: string, event: string): Promise<void> {
+  private async navigate(page: Page, url: string, runId: string, event: string, guard: SiteResponseGuard): Promise<void> {
     await withTransientRetry(async () => {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs });
+      await guard.assertNotRateLimited();
+      try {
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs });
+      } catch (error) {
+        await guard.assertNotRateLimited();
+        throw error;
+      }
+      await guard.check(page);
     }, {
       attempts: this.config.retryAttempts,
       delayMs: this.config.retryDelayMs,
@@ -179,14 +222,17 @@ export class CreativeListingSource implements ListingSource {
     });
   }
 
-  private async discoverWithRetry(page: Page, runId: string, pageNumber: number): Promise<string[]> {
+  private async discoverWithRetry(page: Page, runId: string, pageNumber: number, guard: SiteResponseGuard): Promise<string[]> {
     return withTransientRetry(async () => {
-      const discoveryState = page.locator([
-        ...CREATIVE_LISTING_SELECTORS.listingContainer,
-        ...CREATIVE_LISTING_SELECTORS.emptyListings,
-      ].join(", ")).first();
-      await discoveryState.waitFor({ state: "visible", timeout: this.config.selectorTimeoutMs });
-      return discoverListingUrls(page, this.config.baseUrl);
+      await this.waitForRendered(page, guard, async () => await hasAnyVisible(page, [
+        ...CREATIVE_LISTING_SELECTORS.listingContainer, ...CREATIVE_LISTING_SELECTORS.emptyListings,
+      ]));
+      if (!(await this.isAuthenticated(page, guard))) throw new AuthenticationError();
+      const urls = await discoverListingUrls(page, this.config.baseUrl);
+      if (urls.length === 0 && !(await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.emptyListings))) {
+        throw new SourcePageError("NO_VALID_LISTING_UUIDS");
+      }
+      return urls;
     }, {
       attempts: this.config.retryAttempts,
       delayMs: this.config.retryDelayMs,
@@ -196,24 +242,32 @@ export class CreativeListingSource implements ListingSource {
     });
   }
 
-  private async advancePage(page: Page, next: Locator, before: string, runId: string): Promise<void> {
-    await withTransientRetry(async () => {
-      await next.click();
-      await page.waitForLoadState("domcontentloaded").catch(() => undefined);
-      const deadline = Date.now() + this.config.selectorTimeoutMs;
-      while (Date.now() < deadline) {
-        const urls = await discoverListingUrls(page, this.config.baseUrl);
-        if (`${sanitizedUrl(page.url())}|${urls.join("|")}` !== before) return;
-        await page.waitForTimeout(100);
-      }
-      throw new Error("Pagination timed out before the listing set changed.");
-    }, {
-      attempts: this.config.retryAttempts,
-      delayMs: this.config.retryDelayMs,
-      onRetry: (attempt, error) => {
-        this.logger.warn({ runId, stage: "navigation", event: "pagination_retry", retryAttempt: attempt, errorCode: error.name });
-      },
-    });
+  private async advancePage(page: Page, next: Locator, before: string, guard: SiteResponseGuard): Promise<boolean> {
+    await guard.check(page);
+    await next.click();
+    // Never retry a Next click: a slow response could otherwise skip a page.
+    const deadline = Date.now() + this.config.selectorTimeoutMs;
+    while (Date.now() < deadline) {
+      await guard.check(page);
+      if (await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.accessBarrier)) throw new AuthenticationBarrierError();
+      if (await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.password)) throw new AuthenticationError();
+      const urls = await discoverListingUrls(page, this.config.baseUrl);
+      if (urls.length > 0 && listingPageSignature(urls) !== before) return true;
+      if (await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.emptyListings)) return true;
+      await page.waitForTimeout(100);
+    }
+    return false;
+  }
+
+  private async waitForRendered(page: Page, guard: SiteResponseGuard, ready: () => Promise<boolean>): Promise<void> {
+    const deadline = Date.now() + this.config.selectorTimeoutMs;
+    do {
+      await guard.check(page);
+      if (await hasAnyVisible(page, CREATIVE_LISTING_SELECTORS.accessBarrier)) throw new AuthenticationBarrierError();
+      if (await ready()) return;
+      await page.waitForTimeout(100);
+    } while (Date.now() < deadline);
+    throw new SourcePageError("RENDERED_CONTENT_MISSING");
   }
 
   private async loadSessionState(runId: string): Promise<Awaited<ReturnType<SessionStateStore["load"]>>> {
@@ -273,8 +327,8 @@ async function hasAnyVisible(page: Page, selectors: readonly string[]): Promise<
 export function loadCreativeListingScraperConfig(environment: NodeJS.ProcessEnv = process.env): CreativeListingScraperConfig {
   return {
     baseUrl: environment.CREATIVE_LISTING_BASE_URL ?? "https://www.creativelisting.com/",
-    loginPath: environment.CREATIVE_LISTING_LOGIN_PATH ?? "/login",
-    listingsPath: environment.CREATIVE_LISTING_LISTINGS_PATH ?? "/listings",
+    loginPath: environment.CREATIVE_LISTING_LOGIN_PATH ?? "/auth",
+    listingsPath: environment.CREATIVE_LISTING_LISTINGS_PATH ?? "/deals?view=list",
     headless: environment.CREATIVE_LISTING_HEADLESS !== "false",
     navigationTimeoutMs: positiveInteger(environment.CREATIVE_LISTING_NAVIGATION_TIMEOUT_MS, 30_000),
     selectorTimeoutMs: positiveInteger(environment.CREATIVE_LISTING_SELECTOR_TIMEOUT_MS, 10_000),
@@ -294,8 +348,4 @@ function positiveInteger(value: string | undefined, fallback: number): number {
   const result = Number.parseInt(value, 10);
   if (!Number.isSafeInteger(result) || result <= 0) throw new Error(`Expected a positive integer scraper setting, received '${value}'.`);
   return result;
-}
-
-function normalizedPath(value: string): string {
-  return new URL(value).pathname.replace(/\/+$/, "").toLowerCase();
 }

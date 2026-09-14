@@ -30,10 +30,22 @@ export class DefaultListingNormalizer implements ListingNormalizer {
       rawFields: { ...raw },
     };
 
-    assignString(raw.address, "address", result, issues);
+    if (typeof raw.address !== "string" || raw.address.trim().toLowerCase() !== "address undisclosed") {
+      assignString(raw.address, "address", result, issues);
+    }
     assignString(raw.city, "city", result, issues);
     assignString(raw.state, "state", result, issues, (value) => value.toUpperCase());
     assignString(raw.zipCode, "zipCode", result, issues);
+    if (typeof raw.locationText === "string") {
+      const location = /^([^\n,]+),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/.exec(raw.locationText.trim());
+      if (location?.[1] !== undefined && location[2] !== undefined && location[3] !== undefined) {
+        result.city ??= location[1].trim();
+        result.state ??= location[2];
+        result.zipCode ??= location[3];
+      } else {
+        issues.push({ field: "locationText", rawValue: raw.locationText, code: "MALFORMED", message: "Location text could not be parsed as city, state and ZIP." });
+      }
+    }
     assignString(raw.description, "description", result, issues);
     assignString(raw.occupancyStatus, "occupancyStatus", result, issues);
     assignDate(raw.sourcePostedAt, result, issues);
@@ -86,6 +98,13 @@ export class DefaultListingNormalizer implements ListingNormalizer {
       financials.monthlyPayment = financials.piti;
     }
 
+    const hasPropertyOrFinancialData = [result.propertyType, result.beds, result.fullBaths, result.halfBaths,
+      result.squareFeet, result.yearBuilt, financials.purchasePrice, financials.downPayment, financials.entryFee,
+      financials.loanBalance, financials.interestRate, financials.piti, financials.monthlyPayment, financials.hoa]
+      .some((value) => value !== undefined);
+    if (!hasPropertyOrFinancialData) {
+      issues.push({ field: "listing", rawValue: null, code: "INSUFFICIENT_EXTRACTED_DATA", message: "No usable property or financial fields were extracted." });
+    }
     result.confidence = issues.length === 0 ? "HIGH" : "LOW";
     return result;
   }
@@ -163,12 +182,12 @@ function addIssue(issues: ParsingIssue[], field: string, rawValue: unknown, pars
 
 function normalizeFinancingType(value: unknown): FinancingType {
   if (typeof value !== "string") return "UNKNOWN";
-  const normalized = value.trim().toLowerCase().replaceAll(/[\s-]+/g, "_");
+  const normalized = value.trim().toLowerCase().replace(/^creative listing\s*-\s*/, "").replaceAll(/[\s-]+/g, "_");
   if (normalized === "subject_to" || normalized === "subject2") return "SUBJECT_TO";
   if (normalized === "seller_financing" || normalized === "seller_finance") return "SELLER_FINANCING";
   if (normalized === "hybrid") return "HYBRID";
-  if (normalized === "cash" || normalized === "cash_only") return "CASH";
-  if (normalized.length === 0) return "UNKNOWN";
+  if (normalized === "cash" || normalized === "cash_only" || normalized === "cash_listing") return "CASH";
+  if (normalized.length === 0 || normalized === "creative_listing") return "UNKNOWN";
   return "OTHER";
 }
 

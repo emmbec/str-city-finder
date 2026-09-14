@@ -31,19 +31,23 @@ Responsibilities are deliberately separate:
 
 ## Creative Listing collection
 
-The collector first opens the configured listings route with saved Playwright storage state. A session is valid when the page is not a login form and exposes an authenticated landmark or remains on the configured listings route. Expired state causes a fresh browser context, a single credential-based login, and replacement of the saved state. CAPTCHA and one-time-code controls stop the run instead of being bypassed.
+The collector first opens the configured listings route with saved Playwright storage state. A session requires a rendered authenticated landmark with no public login/signup controls or error response; the pathname alone is never sufficient. Expired state causes a fresh browser context, a single credential-based login, and replacement of the saved state. CAPTCHA and one-time-code controls stop the run instead of being bypassed.
 
 Credentials always come through `SecretProvider` via `KeyVaultCredentialProvider`. Production uses `DefaultAzureCredential` and therefore Managed Identity when deployed in Azure. Production storage state uses a separately configured private Blob container; the local command writes mode-0600 state beneath the ignored `.local/` directory. Storage state, passwords, and usernames are never logged.
 
-Configured routes default to `/login` and `/listings`. They are environment-configurable because the authenticated Creative Listing routes and DOM still require live verification. Selectors are centralized in `src/scraper/selectors.ts` and prefer `data-testid`, `data-listing-id`/`data-deal-id`, `autocomplete`, semantic link relationships, and ARIA labels. Detail extraction reads durable `data-field`, definition-list, table, ARIA/data-value, and Schema.org address/price structures. It retains every discovered label/value under a `source.*` key and maps recognized labels to canonical raw fields.
+Configured routes default to `/auth` and `/deals?view=list`. Live verification on September 11, 2026 confirmed that login redirects to `/dashboard` and its Listings link targets `/deals`; `/listings` renders a 404. Existing local environment overrides must be updated separately. Selectors are centralized in `src/scraper/selectors.ts`. Detail readiness recognizes the live `h2` Listing Highlights landmark. Extraction reads rendered sibling label/value pairs as well as supported semantic markup. It preserves value text, whitespace, and seller descriptions separately; conflicting structured occurrences are retained as arrays rather than silently choosing a value. See [the verification report](docs/creative-listing-live-verification.md).
 
-Discovery accepts only same-origin `/listing(s)/...` and `/deal(s)/...` links, strips query strings/fragments, and deduplicates URLs. Pagination follows an enabled `rel=next`, test-ID, or ARIA-labeled Next control until it is absent/disabled or the page signature repeats. `CREATIVE_LISTING_MAXIMUM_PAGES` is a safety ceiling, not an assumed page count.
+Discovery reads `deal-<UUID>` card containers and constructs canonical `/deals/<UUID>` URLs, deduplicating by UUID. Anchors are not required, and `/deals/new` or other non-UUID routes cannot become listings. Pagination uses sorted UUID sets and stops on absent/disabled Next, repeated pages, no new UUIDs, or the configured page ceiling. A Next click is never retried blindly. `CREATIVE_LISTING_MAXIMUM_PAGES` is a safety ceiling, not an assumed page count.
 
 Navigation, transient page errors, and temporary selector failures use bounded retries. Authentication and deterministic extraction errors are not blindly retried. Failures record a query-free current URL and a screenshot with every input, textarea, and editable region masked. Optional post-auth Playwright traces disable DOM snapshots and source capture, are ignored by Git, and must be stored privately.
 
 Normalization supports currency and monthly-payment text, PITI, entry fee, down payment, purchase price, loan balance, HOA, interest rate, bedrooms, combined or separate full/half bathrooms, square footage, year built, property type, financing type, status, and core location text. The normalizer retains a copy of all raw fields and records structured issues instead of fabricating malformed or conflicting values. When an explicit monthly payment is absent, a successfully parsed PITI value supplies the monthly-payment fact because PITI is itself a monthly payment; an explicit monthly-payment value always takes precedence.
 
 Deterministic evaluation covers the source status and financing-type constraints, cash-only exclusion, STR prohibition/evidence and verification states, down-payment and monthly-payment limits, attraction or destination-city demand, optional military-base proximity, and unique feeder-metro population/travel requirements. Thresholds and enabled behavior are always read from `config/buybox.yaml` at evaluation time.
+
+HTTP 429 and standalone rate-limit error pages produce `RATE_LIMITED`, retaining `retryAfter` when available. The execution stops and its request guard blocks further requests; it does not log in again or retry through the limit. Skipped detail failures produce `INCOMPLETE_COLLECTION` at the end, even if other listings succeeded, so the local command cannot report a broken crawl as successful zero results.
+
+Empty or effectively empty extraction produces `LOW` confidence and `INSUFFICIENT_EXTRACTED_DATA`. Explicit zero payments remain zero, undisclosed addresses remain unavailable after normalization, and lease-option terms stay in raw evidence without being reclassified as down payments or PITI. Fields outside the typed normalized model remain available in `rawFields`.
 
 ## Storage model
 
@@ -114,7 +118,7 @@ No credentials are embedded in the image. Supply deployment configuration and Ma
 
 ## Current limitations
 
-- The configured Creative Listing routes, authenticated landmark selectors, card links, pagination control, and detail labels require a manual live-site verification. The implementation intentionally uses configurable routes and centralized fallbacks rather than claiming an unverified DOM contract.
+- Live verification is deliberately capped; a complete site crawl, every financing variation, and final-page termination have not been exercised live. See [the verification report](docs/creative-listing-live-verification.md) for verified cases and fixture coverage.
 - Cross-run material-change detection and persistence of collection results remain separate from this Phase 3 collection pipeline. The production entry point currently collects, normalizes, evaluates, and logs structured outcomes; the scraper never saves directly to Azure.
 - STR legality, attractions, destination demand, military-base proximity, and feeder-city population/travel facts must be supplied as evidence. The deterministic engine evaluates them but does not research or infer them.
 - URL/ID deduplication occurs within a collection run. Notification settings do not alter evaluation outcomes.

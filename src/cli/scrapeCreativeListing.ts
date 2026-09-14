@@ -7,9 +7,11 @@ import { collectNormalizeAndEvaluate } from "../orchestration/index.js";
 import { createConfiguredRules, DeterministicRuleEngine } from "../rules/index.js";
 import {
   CreativeListingSource,
+  CollectionIncompleteError,
   FileSessionStateStore,
   KeyVaultCredentialProvider,
   loadCreativeListingScraperConfig,
+  RateLimitedError,
 } from "../scraper/index.js";
 
 export async function runLocalScraper(): Promise<void> {
@@ -57,7 +59,10 @@ function requiredEnvironment(name: string): string {
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runLocalScraper().catch((error: unknown) => {
-    console.error(JSON.stringify({ event: "local_scrape_failed", errorCode: error instanceof Error ? error.name : "UnknownError" }));
+    console.error(JSON.stringify({ event: "local_scrape_failed", errorCode: error instanceof RateLimitedError || error instanceof CollectionIncompleteError ? error.code : error instanceof Error ? error.name : "UnknownError",
+      ...(error instanceof RateLimitedError ? { retryAfter: error.retryAfter } : {}),
+      ...(error instanceof CollectionIncompleteError ? { failedListings: error.failedListings } : {}),
+    }));
     process.exitCode = 1;
   });
 }

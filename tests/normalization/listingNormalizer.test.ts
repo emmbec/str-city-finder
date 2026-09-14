@@ -12,6 +12,11 @@ function snapshot(fields: Record<string, unknown>): RawListingSnapshot {
 }
 
 describe("DefaultListingNormalizer", () => {
+  it.each([{}, { description: "Only seller prose", sourceStatus: "Active" }, { "source.unknown": "some text" }, { address: "Address undisclosed" }])("marks effectively empty extraction as insufficient", (fields) => {
+    const result = new DefaultListingNormalizer().normalize(snapshot(fields));
+    expect(result.confidence).toBe("LOW");
+    expect(result.parsingIssues).toContainEqual(expect.objectContaining({ code: "INSUFFICIENT_EXTRACTED_DATA" }));
+  });
   it("normalizes financial and property fields while preserving every raw value", () => {
     const raw = {
       address: " 123 Main St ", city: " Augusta ", state: "ga", zipCode: "30901",
